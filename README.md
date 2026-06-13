@@ -171,6 +171,25 @@ Lists configured aliases in the standard OpenAI shape:
 }
 ```
 
+### `GET /getheadstamps`
+
+Returns the ordered class labels (headstamps) baked into a loaded model as a
+JSON array of strings, so a client can seed its headstamp list from the
+server's source of truth instead of maintaining its own copy.
+
+Query parameter:
+
+- `model` — alias from `config.MODELS`. Optional when only one model is
+  configured; required otherwise.
+
+```json
+["Federal_9mm", "Winchester_9mm", "CCI_9mm"]
+```
+
+The model is loaded on demand (same cache as `/v1/chat/completions`), so the
+first call against a lazy model pays the load cost. Auth follows the same
+`API_KEY` rule as the `/v1/*` endpoints.
+
 ### `GET /healthz`
 
 Unauthenticated quick check — returns `{"status": "ok", "models": [...]}`.

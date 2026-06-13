@@ -161,6 +161,10 @@ class ModelManager:
         for alias in self._aliases:
             self._load(alias)
 
+    def classes(self, alias: str) -> List[str]:
+        """Return the ordered class labels for a model, loading it if needed."""
+        return list(self._load(alias)["classes"])
+
     def _resolve_path(self, raw: str) -> Path:
         path = Path(raw)
         if not path.is_absolute():
