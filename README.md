@@ -98,9 +98,12 @@ The `{modelid}` in the path above matches the image folder name for that
 model inside the client:
 
 1. Open the CaseSorter client.
-2. Go to **Manage Images**.
+2. Go to **Models → Images → Open Folder**.
 3. The image folder name shown there is your model id — write it down
    for each model you intend to host.
+
+In the `Training/Models` folder there is a zip file named after each
+model id (e.g. `67.zip`, `42.zip`).
 
 ### 5. Edit `config.py`
 
