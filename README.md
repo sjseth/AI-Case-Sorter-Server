@@ -81,8 +81,9 @@ the installer are fine — just click through them if you're not sure.
 
 ### 3. Copy your model file(s) into `models/`
 
-Trained model files ship with the CaseSorter desktop client. On a default
-Windows install they live at:
+Any model you've trained yourself in the CaseSorter desktop client, or
+downloaded from the community, lives under the client's training
+directory. On a default Windows install that's:
 
 ```
 C:\Program Files\SJSeth\AI Brass Sorter\training\models\{modelid}.zip
