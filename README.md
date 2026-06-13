@@ -167,20 +167,22 @@ The client must use `http://` — `https://` is **not** supported.
 
 ## Quick start (advanced)
 
-If you already have Python and Git and just want the bare commands:
+If you already have Python and Git and just want the bare steps:
 
 ```bash
-# 1. Install PyTorch + server deps (auto-detects GPU vs CPU)
-python setup.py
+# 1. Clone and enter the repo
+git clone https://github.com/sjseth/AI-Case-Sorter-Server.git
+cd AI-Case-Sorter-Server
 
-# 2. Edit config.py:
+# 2. Drop your model .zip(s) into ./models/ and edit config.py:
 #    - set HOST ("127.0.0.1" or "0.0.0.0")
-#    - add at least one entry to MODELS
+#    - add at least one entry to MODELS (and MODEL_OPTIONS if not 224px)
 #    - optionally set API_KEY when binding to 0.0.0.0
 
-# 3. Run the server
-python server.py
-# → INFO: Listening on http://127.0.0.1:8000
+# 3. Launch -- the script installs PyTorch + deps on first run, then
+#    runs the server.
+./startserver.sh        # macOS / Linux
+startserver.bat         # Windows
 
 # 4. (optional) Sanity check
 curl http://127.0.0.1:8000/healthz
@@ -188,6 +190,14 @@ curl http://127.0.0.1:8000/v1/models
 ```
 
 The client appends `/v1/chat/completions` itself.
+
+If you'd rather drive the install and launch yourself instead of using
+the start script, run the two steps it wraps:
+
+```bash
+python setup.py    # one-time: PyTorch + server deps (GPU/CPU autodetect)
+python server.py   # start the server
+```
 
 ---
 
