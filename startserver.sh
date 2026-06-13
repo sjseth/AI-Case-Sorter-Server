@@ -14,7 +14,7 @@ case "$(uname -s)" in
 esac
 
 echo "Checking Python environment..."
-"$PYTHON" setup_torch.py
+"$PYTHON" setup.py
 
 echo
 echo "Starting CaseSorter AI Server..."

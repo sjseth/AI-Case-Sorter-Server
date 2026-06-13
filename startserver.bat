@@ -9,7 +9,7 @@ if not exist "%PYTHON%" (
 )
 
 echo Checking Python environment...
-"%PYTHON%" setup_torch.py
+"%PYTHON%" setup.py
 if errorlevel 1 (
     echo.
     echo Setup failed - see output above.

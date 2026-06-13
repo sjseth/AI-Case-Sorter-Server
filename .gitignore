@@ -1,0 +1,10 @@
+# Claude Code project instructions (local only, not pushed)
+CLAUDE.md
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# setup.py marker files (local environment state)
+.torch_setup_complete
+.server_deps_complete

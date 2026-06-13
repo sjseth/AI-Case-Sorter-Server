@@ -19,7 +19,7 @@ expects to load).
 │ CaseSorter client  │ ─────────────────────────────▶ │  AI Server (this)    │
 │ (or any OpenAI     │   { model, messages:[ ...      │                      │
 │  SDK / curl / etc) │     image_url data:base64 ]}   │  FastAPI + PyTorch   │
-│                    │ ◀───────────────────────────── │  + ConvNeXt .pth     │
+│                    │ ◀───────────────────────────── │  + ConvNeXt ckpt     │
 └────────────────────┘   { choices[0].message.content │                      │
                             = "Winchester_45ACP" }   └──────────────────────┘
 ```
@@ -34,11 +34,11 @@ and returns the predicted class name as the assistant message content.
 ## Requirements
 
 - **Python 3.10+** (uses `from __future__ import annotations` plus PEP 604 unions).
-- **PyTorch 2.9.x** and **torchvision 0.24.x** (installed by `setup_torch.py`).
+- **PyTorch 2.9.x** and **torchvision 0.24.x** (installed by `setup.py`).
 - **Optional CUDA:** Ampere or newer (compute capability ≥ 8.0) with at
   least 4 GB of VRAM. Lower-spec GPUs and CPU-only machines automatically
   fall back to the CPU wheel.
-- The HTTP stack (FastAPI, uvicorn, Pillow) — also installed by `setup_torch.py`.
+- The HTTP stack (FastAPI, uvicorn, Pillow) — also installed by `setup.py`.
 
 ---
 
@@ -46,7 +46,7 @@ and returns the predicted class name as the assistant message content.
 
 ```bash
 # 1. Install PyTorch + server deps (auto-detects GPU vs CPU)
-python setup_torch.py
+python setup.py
 
 # 2. Edit config.py:
 #    - set HOST ("127.0.0.1" or "0.0.0.0")
@@ -86,7 +86,7 @@ PORT: int = 8000
 API_KEY: Optional[str] = None    # None/"" = no auth, otherwise Bearer match
 
 MODELS: Dict[str, str] = {
-    "headstamps-v3":        "/abs/path/to/headstamps_v3.pth",
+    "headstamps-v3":        "/abs/path/to/headstamps_v3.zip",
     "primers-experimental": "models/primers_swa.pth",  # relative to config.py
 }
 
@@ -184,9 +184,11 @@ at `/openapi.json`.
 
 ## Checkpoint format
 
-`model_manager.py` knows how to load `.pth` files written by the
-`train_convnext.py` trainer (and its SWA-finalised `*_swa.pth` companion).
-A checkpoint is a `torch.save(...)` blob containing at minimum:
+`model_manager.py` knows how to load checkpoint files written by the
+`train_convnext.py` trainer (and its SWA-finalised `*_swa` companion). The
+file extension doesn't matter -- `.pth`, `.zip`, or anything else all work,
+since `torch.load()` reads the content, not the name. A checkpoint is a
+`torch.save(...)` blob containing at minimum:
 
 | Key                | Type                | Notes                                        |
 |--------------------|---------------------|----------------------------------------------|
@@ -215,8 +217,8 @@ state-dict keys:
 `torch.optim.swa_utils.AveragedModel` wraps the model so its state-dict
 keys are prefixed with `module.` and contain an extra `n_averaged` buffer.
 The loader strips the prefix and drops `n_averaged` before
-`load_state_dict`. SWA-finalised checkpoints (`*_swa.pth`) load via the
-same code path as regular ones.
+`load_state_dict`. SWA-finalised checkpoints (commonly named `*_swa.pth` or
+`*_swa.zip`) load via the same code path as regular ones.
 
 ### Preprocessing
 
@@ -251,10 +253,10 @@ AIServer/
 ├── config.py            ← user-editable settings
 ├── server.py            ← FastAPI app + entry point
 ├── model_manager.py     ← checkpoint loader + inference + cache
-└── setup_torch.py       ← PyTorch / FastAPI installer (GPU/CPU autodetect)
+└── setup.py             ← PyTorch / FastAPI installer (GPU/CPU autodetect)
 ```
 
-Marker files written by `setup_torch.py` (`.torch_setup_complete`,
+Marker files written by `setup.py` (`.torch_setup_complete`,
 `.server_deps_complete`) live in the same folder and are how the
 installer decides whether to skip work on subsequent runs. Delete them
 to force a fresh install.
@@ -284,7 +286,7 @@ raw PNG/JPEG bytes (not a URL or hex).
 
 **`CUDA reported available but test op failed`** in the logs — `torch`
 sees a GPU but can't actually run on it (driver mismatch, etc.). The
-server falls back to CPU automatically; rerun `setup_torch.py` to
+server falls back to CPU automatically; rerun `setup.py` to
 reinstall the right wheel.
 
 ---
@@ -297,7 +299,7 @@ the parent CaseSorter codebase. To lift it into its own repo:
 1. Copy the folder verbatim.
 2. Drop `Claude.md` if you don't want the original brief in the history.
 3. Decide whether to keep the GPU/CPU autodetect or simplify to a plain
-   `requirements.txt`. The current `setup_torch.py` pins
+   `requirements.txt`. The current `setup.py` pins
    `torch==2.9.1` / `torchvision==0.24.1` and uses the cu128 wheel index
    for GPU.
 4. If you want a `/v1/embeddings` or `/v1/chat/completions` streaming

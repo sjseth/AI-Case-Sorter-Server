@@ -7,9 +7,9 @@ Pillow) added. The auto-detect logic prefers a CUDA wheel on Ampere+ GPUs
 with sufficient VRAM and otherwise falls back to the CPU wheel.
 
 Usage:
-    python setup_torch.py            # auto-detect (default)
-    python setup_torch.py --mode cpu # force CPU
-    python setup_torch.py --mode gpu # force GPU (errors if unsuitable)
+    python setup.py            # auto-detect (default)
+    python setup.py --mode cpu # force CPU
+    python setup.py --mode gpu # force GPU (errors if unsuitable)
 """
 
 from __future__ import annotations

@@ -17,14 +17,21 @@ import base64
 import io
 import logging
 import re
+import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any, List, Optional, Union
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
+
+# The embeddable Python distribution in python_e/ doesn't add the script's
+# own directory to sys.path, so config/model_manager wouldn't be importable
+# without this.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config
 from model_manager import ModelManager
@@ -58,6 +65,18 @@ manager = ModelManager(
 if getattr(config, "PRELOAD_MODELS", False):
     log.info("Preloading %d model(s)...", len(config.MODELS))
     manager.preload()
+
+
+# ---------------------------------------------------------------------------
+# Request logging
+# ---------------------------------------------------------------------------
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    client = request.client.host if request.client else "?"
+    response = await call_next(request)
+    log.info("%s %s %s -> %d", client, request.method, request.url.path, response.status_code)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +248,34 @@ def healthz() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Raw-request logging
+# ---------------------------------------------------------------------------
+
+def _logging_http_protocol() -> type:
+    """Wrap uvicorn's HTTP protocol to dump raw bytes at DEBUG level.
+
+    uvicorn's "Invalid HTTP request received." warning doesn't include what
+    was actually sent. Set LOG_LEVEL = "DEBUG" in config.py to see the raw
+    bytes of each chunk as it arrives, which usually makes the cause obvious
+    (e.g. a TLS handshake hitting a plain-HTTP port, or a malformed request
+    line).
+    """
+    try:
+        from uvicorn.protocols.http.httptools_impl import HttpToolsProtocol as _Base
+    except ImportError:
+        from uvicorn.protocols.http.h11_impl import H11Protocol as _Base
+
+    class LoggingHTTPProtocol(_Base):  # type: ignore[misc]
+        def data_received(self, data: bytes) -> None:
+            if log.isEnabledFor(logging.DEBUG):
+                client = "%s:%d" % self.client if self.client else "unknown"
+                log.debug("Raw data from %s (%d bytes): %r", client, len(data), data[:2048])
+            super().data_received(data)
+
+    return LoggingHTTPProtocol
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -241,6 +288,7 @@ def main() -> None:
         host=config.HOST,
         port=config.PORT,
         log_level=(config.LOG_LEVEL or "info").lower(),
+        http=_logging_http_protocol(),
     )
 
 

@@ -19,7 +19,7 @@ from typing import Dict, Optional
 # Interface the server binds to.
 #   "127.0.0.1" -> localhost only (safest; reachable only from this machine)
 #   "0.0.0.0"   -> all interfaces (reachable from other machines on the LAN)
-HOST: str = "127.0.0.1"
+HOST: str = "0.0.0.0"
 
 # TCP port to listen on.
 PORT: int = 8000
@@ -41,16 +41,17 @@ API_KEY: Optional[str] = None
 # ---------------------------------------------------------------------------
 
 # Aliases the OpenAI request's "model" field can use, mapped to the on-disk
-# .pth checkpoint to load. Paths may be absolute or relative to the directory
-# this file lives in.
+# checkpoint file to load. The extension doesn't matter (.pth, .zip, etc.) --
+# torch.load() reads the content, not the name. Paths may be absolute or
+# relative to the directory this file lives in.
 #
 # Example:
 #   MODELS = {
-#       "headstamps-v3":        r"C:\caselib\models\headstamps_v3.pth",
+#       "headstamps-v3":        r"C:\caselib\models\headstamps_v3.zip",
 #       "primers-experimental": "models/primers_swa.pth",
 #   }
 MODELS: Dict[str, str] = {
-    # "headstamps-v3": "models/headstamps_v3.pth",
+     "9mm": "models/9mm.zip",
 }
 
 # Optional per-model tweaks. Keys must match aliases in MODELS.
@@ -58,7 +59,7 @@ MODELS: Dict[str, str] = {
 #   "image_size" -> int. Resize edge used at inference. Defaults to 224
 #                   (the torchvision IMAGENET1K_V1 default for ConvNeXt).
 MODEL_OPTIONS: Dict[str, dict] = {
-    # "headstamps-v3": {"image_size": 232},
+     "9mm": {"image_size": 480},
 }
 
 
@@ -68,7 +69,9 @@ MODEL_OPTIONS: Dict[str, dict] = {
 
 # When True, every model in MODELS is loaded at startup so the first request
 # does not pay the load cost. When False, models load lazily on first use.
-PRELOAD_MODELS: bool = False
+PRELOAD_MODELS: bool = True
 
 # Logging level. One of DEBUG / INFO / WARNING / ERROR.
+# DEBUG also dumps the raw bytes of each incoming HTTP chunk -- useful for
+# diagnosing uvicorn's "Invalid HTTP request received." warning.
 LOG_LEVEL: str = "INFO"
