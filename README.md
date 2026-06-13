@@ -183,7 +183,7 @@ Query parameter:
   configured; required otherwise.
 
 ```json
-["Federal_9mm", "Winchester_9mm", "CCI_9mm"]
+["Federal", "Winchester", "CCI"]
 ```
 
 The model is loaded on demand (same cache as `/v1/chat/completions`), so the
