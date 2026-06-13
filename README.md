@@ -120,6 +120,26 @@ The keys (`"my-model"` above) are aliases — whatever you type here is
 what you'll set as the model name inside the client. Save the file when
 you're done.
 
+#### Optional: require an API key
+
+If you're exposing the server beyond your own machine (e.g. `HOST` set
+to `0.0.0.0` so other PCs on your network can reach it), set an API key
+so random callers can't use it. In `config.py`, change:
+
+```python
+API_KEY: Optional[str] = None
+```
+
+to a quoted string of your choice — anything will do, just keep it
+secret:
+
+```python
+API_KEY: Optional[str] = "my-secret-key-1234"
+```
+
+Then enter the **same value** in the CaseSorter client's API key field.
+Leave `API_KEY` as `None` to skip authentication entirely.
+
 ### 6. Start the server
 
 - **Windows:** double-click `startserver.bat`
@@ -198,7 +218,13 @@ LOG_LEVEL: str = "INFO"
   non-empty `API_KEY`.
 - **API key.** When `API_KEY` is set, every request must send
   `Authorization: Bearer <key>`. When it's `None` or empty, the server
-  accepts anything (including no `Authorization` header at all).
+  accepts anything (including no `Authorization` header at all). To
+  enable auth, replace `None` with a quoted string and put the same
+  value in the client's API key field:
+
+  ```python
+  API_KEY: Optional[str] = "my-secret-key-1234"
+  ```
 - **Model aliases.** The `model` field in the OpenAI request is looked up
   in `MODELS`. Unknown aliases return HTTP 404 with the list of known names.
   Paths can be absolute or relative to `config.py`.

@@ -33,6 +33,10 @@ PORT: int = 8000
 # without authentication. When set, clients must send
 #   Authorization: Bearer <API_KEY>
 # on every request. Strongly recommended when HOST is "0.0.0.0".
+#
+# Example -- replace None with a quoted string of your choice:
+#   API_KEY: Optional[str] = "my-secret-key-1234"
+# Then enter the same value as the API key in the CaseSorter client.
 API_KEY: Optional[str] = None
 
 
