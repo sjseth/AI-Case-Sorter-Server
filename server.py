@@ -242,6 +242,35 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
     )
 
 
+@app.get(
+    "/getheadstamps",
+    response_model=List[str],
+    dependencies=[Depends(require_api_key)],
+)
+def get_headstamps(model: Optional[str] = None) -> List[str]:
+    alias = model
+    if alias is None:
+        configured = manager.aliases()
+        if len(configured) != 1:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Multiple models configured; specify ?model=<alias>. "
+                    f"Known models: {sorted(configured)}"
+                ),
+            )
+        alias = configured[0]
+    if not manager.has(alias):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Model {alias!r} is not configured. "
+                f"Known models: {sorted(manager.aliases())}"
+            ),
+        )
+    return manager.classes(alias)
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
     return {"status": "ok", "models": manager.aliases()}
