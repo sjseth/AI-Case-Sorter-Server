@@ -44,33 +44,160 @@ and returns the predicted class name as the assistant message content.
 
 ## Quick start
 
-```bash
-# 1. Install PyTorch + server deps (auto-detects GPU vs CPU)
-python setup.py
+> **Disclaimer:** This server is intended to be used with **CaseSorter
+> v1.3.2 or newer**. It may work with older client versions, but
+> **importing headstamps from the model is not supported in earlier
+> versions.**
 
-# 2. Edit config.py:
+The walkthrough below assumes you've never used Git before. If you're
+already comfortable with Python and Git, skip to
+[Quick start (advanced)](#quick-start-advanced).
+
+### 1. Install Git
+
+Download and install Git from the official site. The default options in
+the installer are fine — just click through them if you're not sure.
+
+- https://git-scm.com/downloads
+
+### 2. Create a folder and clone the repo
+
+1. Make a new folder on your computer where the server will live, for
+   example `C:\AIServer` on Windows.
+2. Open that folder, right-click inside it, and choose **Open in
+   Terminal** (Windows 11) or **Git Bash Here** (installed by Git for
+   Windows). On macOS or Linux, open Terminal and `cd` into the folder.
+3. Clone this repository:
+
+   ```
+   git clone https://github.com/sjseth/AI-Case-Sorter-Server.git
+   ```
+
+4. Step into the folder that was just created:
+
+   ```
+   cd AI-Case-Sorter-Server
+   ```
+
+### 3. Copy your model file(s) into `models/`
+
+Any model you've trained yourself in the CaseSorter desktop client, or
+downloaded from the community, lives under the client's training
+directory. On a default Windows install that's:
+
+```
+C:\Program Files\SJSeth\AI Brass Sorter\training\models\{modelid}.zip
+```
+
+Copy the `.zip` for each model you want to host into the **`models/`**
+folder inside the repo you just cloned.
+
+### 4. Find your model id
+
+The `{modelid}` in the path above matches the image folder name for that
+model inside the client:
+
+1. Open the CaseSorter client.
+2. Go to **Models → Images → Open Folder**.
+3. The image folder name shown there is your model id — write it down
+   for each model you intend to host.
+
+In the `Training/Models` folder there is a zip file named after each
+model id (e.g. `67.zip`, `42.zip`).
+
+### 5. Edit `config.py`
+
+Open `config.py` in any text editor (Notepad is fine) and update two
+dictionaries so they point at the model(s) you just copied:
+
+```python
+MODELS: Dict[str, str] = {
+    "my-model": "models/<modelid>.zip",   # replace <modelid> with your filename
+}
+
+MODEL_OPTIONS: Dict[str, dict] = {
+    "my-model": {"image_size": 480},      # 480 is the default for community models
+}
+```
+
+The keys (`"my-model"` above) are aliases — whatever you type here is
+what you'll set as the model name inside the client. Save the file when
+you're done.
+
+#### Optional: require an API key
+
+If you're exposing the server beyond your own machine (e.g. `HOST` set
+to `0.0.0.0` so other PCs on your network can reach it), set an API key
+so random callers can't use it. In `config.py`, change:
+
+```python
+API_KEY: Optional[str] = None
+```
+
+to a quoted string of your choice — anything will do, just keep it
+secret:
+
+```python
+API_KEY: Optional[str] = "my-secret-key-1234"
+```
+
+Then enter the **same value** in the CaseSorter client's API key field.
+Leave `API_KEY` as `None` to skip authentication entirely.
+
+### 6. Start the server
+
+- **Windows:** double-click `startserver.bat`
+- **macOS / Linux:** run `./startserver.sh`
+
+The first launch installs PyTorch and the rest of the dependencies,
+which can take several minutes. Once you see
+`INFO: Listening on http://...:8000`, the server is up.
+
+Then in the CaseSorter client, configure the OpenAI connection with:
+
+| Field        | Value                                                     |
+|--------------|-----------------------------------------------------------|
+| Endpoint URL | `http://localhost:8000` (or `http://<server-ip>:8000`)    |
+| Model        | the alias you put in `MODELS` (e.g. `my-model`)           |
+| API key      | match `API_KEY` from `config.py`, or anything if unset    |
+
+The client must use `http://` — `https://` is **not** supported.
+
+---
+
+## Quick start (advanced)
+
+If you already have Python and Git and just want the bare steps:
+
+```bash
+# 1. Clone and enter the repo
+git clone https://github.com/sjseth/AI-Case-Sorter-Server.git
+cd AI-Case-Sorter-Server
+
+# 2. Drop your model .zip(s) into ./models/ and edit config.py:
 #    - set HOST ("127.0.0.1" or "0.0.0.0")
-#    - add at least one entry to MODELS
+#    - add at least one entry to MODELS (and MODEL_OPTIONS if not 224px)
 #    - optionally set API_KEY when binding to 0.0.0.0
 
-# 3. Run the server
-python server.py
-# → INFO: Listening on http://127.0.0.1:8000
+# 3. Launch -- the script installs PyTorch + deps on first run, then
+#    runs the server.
+./startserver.sh        # macOS / Linux
+startserver.bat         # Windows
 
 # 4. (optional) Sanity check
 curl http://127.0.0.1:8000/healthz
 curl http://127.0.0.1:8000/v1/models
 ```
 
-Then in the CaseSorter client, configure the OpenAI connection with:
-
-| Field          | Value                                          |
-|----------------|------------------------------------------------|
-| Endpoint URL   | `http://127.0.0.1:8000` (no trailing `/v1/...`) |
-| Model          | the alias you put in `MODELS` (e.g. `headstamps-v3`) |
-| API key        | match `API_KEY` from `config.py`, or anything if unset |
-
 The client appends `/v1/chat/completions` itself.
+
+If you'd rather drive the install and launch yourself instead of using
+the start script, run the two steps it wraps:
+
+```bash
+python setup.py    # one-time: PyTorch + server deps (GPU/CPU autodetect)
+python server.py   # start the server
+```
 
 ---
 
@@ -105,7 +232,13 @@ LOG_LEVEL: str = "INFO"
   non-empty `API_KEY`.
 - **API key.** When `API_KEY` is set, every request must send
   `Authorization: Bearer <key>`. When it's `None` or empty, the server
-  accepts anything (including no `Authorization` header at all).
+  accepts anything (including no `Authorization` header at all). To
+  enable auth, replace `None` with a quoted string and put the same
+  value in the client's API key field:
+
+  ```python
+  API_KEY: Optional[str] = "my-secret-key-1234"
+  ```
 - **Model aliases.** The `model` field in the OpenAI request is looked up
   in `MODELS`. Unknown aliases return HTTP 404 with the list of known names.
   Paths can be absolute or relative to `config.py`.
@@ -283,6 +416,11 @@ to force a fresh install.
 ---
 
 ## Troubleshooting
+
+**Client can't connect / TLS or certificate error** — the CaseSorter
+client must point at `http://localhost:<port>` or
+`http://<ip-address>:<port>`. `https://` is **not** supported and will
+fail to connect.
 
 **`401 Invalid or missing API key`** — `config.API_KEY` is set but the
 client isn't sending a matching Bearer token. Either clear `API_KEY` or
