@@ -153,6 +153,9 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: List[Choice]
     usage: Usage = Field(default_factory=Usage)
+    # CaseSorter extension: top-1 softmax probability. Lives at the top level
+    # so OpenAI-vision clients that don't know about it just ignore it.
+    confidence: Optional[float] = None
 
 
 class ModelInfo(BaseModel):
@@ -239,6 +242,7 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
         created=int(time.time()),
         model=req.model,
         choices=[Choice(message=ResponseMessage(content=pred["label"]))],
+        confidence=pred["score"],
     )
 
 
