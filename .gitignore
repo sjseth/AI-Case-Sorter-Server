@@ -8,3 +8,6 @@ __pycache__/
 # setup.py marker files (local environment state)
 .torch_setup_complete
 .server_deps_complete
+
+# Local virtual environment created by startserver.sh
+.venv/
