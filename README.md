@@ -283,13 +283,18 @@ is the entirety of `choices[0].message.content`:
       "finish_reason": "stop"
     }
   ],
-  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+  "confidence": 0.973
 }
 ```
 
-Confidence is **not** returned to the client — keeping the body to just the
-label means existing OpenAI-vision clients can read the response without
-any custom parsing. (`score` is logged server-side at `INFO` level.)
+`confidence` is a CaseSorter extension: the top-1 softmax probability
+of the predicted class, in the range `0.0`–`1.0`. It lives at the top
+level of the response — OpenAI-vision clients that don't know about it
+ignore it, and clients that do can read `response.confidence` directly.
+`choices[0].message.content` is still just the bare label, so the
+"AI response" the SDKs expose is unchanged. (The same value is also
+logged server-side at `INFO` level.)
 
 ### `GET /v1/models`
 
@@ -461,5 +466,7 @@ the parent CaseSorter codebase. To lift it into its own repo:
    for GPU.
 4. If you want a `/v1/embeddings` or `/v1/chat/completions` streaming
    surface later, it slots into `server.py` next to the existing
-   endpoints; the manager already returns a `score` you can plumb into a
-   richer response shape.
+   endpoints. The manager already returns full softmax probabilities;
+   the top-1 score is exposed today as the response's `confidence`
+   field, and top-K or per-class scores could be plumbed through the
+   same way.
