@@ -446,6 +446,7 @@
     poll(() => refresh().catch((e) => console.warn(e)), 1500);
 
     const history = await GET(`/api/v1/models/${m.id}/jobs?kind=train&limit=20`);
+    if (!state.serverInfo) state.serverInfo = await GET("/api/v1/server");
     return h("div", { class: "stack" },
       !m.trainable ? h("div", { class: "notice warn" }, "Community and read-only models cannot be trained here. Export it and import it back as your own to fork it.") : null,
       h("div", { class: "card stack" }, h("div", { class: "row between" }, h("h2", {}, "Run"), h("div", { class: "row" }, startBtn, cancelBtn)),
