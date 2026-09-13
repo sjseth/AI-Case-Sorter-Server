@@ -1,33 +1,63 @@
 # CaseSorter AI Server
 
-A small Python HTTP server that hosts trained **ConvNeXt** image-classification
-checkpoints behind an **OpenAI-compatible API** (`POST /v1/chat/completions`,
-`GET /v1/models`). It exists so the CaseSorter desktop client — which already
-knows how to talk to OpenAI — can be pointed at a local server and run
-inference against your own trained models with no client-side changes.
+The server-side half of the [AI Case Sorter](https://github.com/sjseth/AI-Case-Sorter-Py).
+It runs on the machine with the GPU (or the most CPU) and does two jobs:
 
-The server is **inference-only**. Training still happens with the standalone
-ConvNeXt trainer (see [Checkpoint format](#checkpoint-format) for what it
-expects to load).
+1. **Serve models.** Trained **ConvNeXt** headstamp classifiers are exposed
+   behind an **OpenAI-compatible API** (`POST /v1/chat/completions`,
+   `GET /v1/models`, `GET /getheadstamps`). The CaseSorter desktop client
+   already knows how to talk to OpenAI, so it can be pointed at this server
+   with no client-side changes.
+2. **Do the heavy lifting for light-weight clients.** A client running in
+   *remote* mode **binds** to this server and creates its models here: it
+   pushes training images, asks for a training run, watches progress,
+   moderates images, evaluates, exports and shares. The client keeps the
+   camera and the serial-connected sorting machine; the server keeps the
+   models and the CPU/GPU work. Everything the desktop client can do with a
+   model locally is available over `/api/v1` (see
+   [Remote-client API](#remote-client-api)).
+
+A **browser UI** at `http://<host>:<port>/` drives both: set the admin
+password, pair clients, sign in to the community and download models, and
+create / train / evaluate / serve models by hand.
 
 ---
 
 ## How it fits together
 
 ```
-┌────────────────────┐    POST /v1/chat/completions     ┌──────────────────────┐
-│ CaseSorter client  │ ─────────────────────────────▶ │  AI Server (this)    │
-│ (or any OpenAI     │   { model, messages:[ ...      │                      │
-│  SDK / curl / etc) │     image_url data:base64 ]}   │  FastAPI + PyTorch   │
-│                    │ ◀───────────────────────────── │  + ConvNeXt ckpt     │
-└────────────────────┘   { choices[0].message.content │                      │
-                            = "Winchester_45ACP" }   └──────────────────────┘
+                       ┌───────────────────────────────────────────────┐
+  Serving              │  AI Server                                    │
+  ──────               │                                               │
+  CaseSorter client ───┼─▶ POST /v1/chat/completions ──▶ ConvNeXt ckpt │
+  (OpenAI mode / any   │   { model, messages:[image_url data:base64] } │
+   OpenAI SDK / curl)  │   ◀── { choices[0].message.content = "WIN",   │
+                       │         confidence: 0.97 }                    │
+                       │                                               │
+  Remote mode          │  /api/v1  ── models, images, train, evaluate, │
+  ───────────          │             export/import, share, jobs        │
+  light-weight client ─┼─▶ bind with pairing code → bearer token        │
+  (camera + sorter)    │                                               │
+                       │  Web UI  ── http://host:port/                 │
+  Browser ─────────────┼─▶ dashboard, models, jobs, community,         │
+                       │   clients, settings                           │
+                       │                                               │
+                       │  Registry: data/config/server.db              │
+                       │  Models:   data/models/<id>/{images,          │
+                       │            trainedmodel,reports}              │
+                       └───────────────────────────────────────────────┘
 ```
 
-The client sends a standard OpenAI multimodal chat completion request. The
-server pulls the first `image_url` out of the messages, decodes the
-`data:image/...;base64,...` payload, runs it through the configured model,
-and returns the predicted class name as the assistant message content.
+Models come from three places and all serve the same way:
+
+- **`config.MODELS`** -- checkpoint files you copied in by hand (the original
+  way; still works exactly as before).
+- **The registry** -- models created, trained, imported or downloaded
+  through the UI / API. Toggle *Serve this model* and they appear on the
+  OpenAI endpoints under their alias.
+- **The community** -- sign in with the same reloadingrecipes.com account as
+  the desktop client, browse the catalogue, download; downloads are served
+  automatically (configurable).
 
 ---
 
@@ -38,7 +68,10 @@ and returns the predicted class name as the assistant message content.
 - **Optional CUDA:** Ampere or newer (compute capability ≥ 8.0) with at
   least 4 GB of VRAM. Lower-spec GPUs and CPU-only machines automatically
   fall back to the CPU wheel.
-- The HTTP stack (FastAPI, uvicorn, Pillow) — also installed by `setup.py`.
+- The HTTP stack (FastAPI, uvicorn, Pillow, python-multipart) plus
+  `requests` and `msal` for the community backend — all installed by
+  `setup.py`. Existing installs pick up the new packages automatically on
+  the next `startserver` run.
 
 ---
 
@@ -79,7 +112,11 @@ the installer are fine — just click through them if you're not sure.
    cd AI-Case-Sorter-Server
    ```
 
-### 3. Copy your model file(s) into `models/`
+### 3. Copy your model file(s) into `models/` (optional)
+
+You can skip steps 3–5 entirely and instead train, import or download
+models from the browser UI once the server is running (step 6). If you
+already have checkpoint files, this is the quickest way to serve them.
 
 Any model you've trained yourself in the CaseSorter desktop client, or
 downloaded from the community, lives under the client's training
@@ -153,12 +190,18 @@ The first launch installs PyTorch and the rest of the dependencies,
 which can take several minutes. Once you see
 `INFO: Listening on http://...:8000`, the server is up.
 
+Open **http://localhost:8000/** in a browser. Because the server listens on
+all interfaces by default, the first visit asks you to create an admin
+password (on a `127.0.0.1`-only server no password is needed). From there
+you can create a model, upload training images, train it and switch on
+*Serve this model* -- or sign in on the **Community** page and download one.
+
 Then in the CaseSorter client, configure the OpenAI connection with:
 
 | Field        | Value                                                     |
 |--------------|-----------------------------------------------------------|
 | Endpoint URL | `http://localhost:8000` (or `http://<server-ip>:8000`)    |
-| Model        | the alias you put in `MODELS` (e.g. `my-model`)           |
+| Model        | the alias you put in `MODELS`, or a served registry model's alias (shown on its Overview page) |
 | API key      | match `API_KEY` from `config.py`, or anything if unset    |
 
 The client must use `http://` — `https://` is **not** supported.
@@ -223,6 +266,11 @@ MODEL_OPTIONS: Dict[str, dict] = {
 
 PRELOAD_MODELS: bool = False     # True = warm all models at startup
 LOG_LEVEL: str = "INFO"
+
+DATA_DIR: Optional[str] = None   # registry + images + checkpoints; None = "<repo>/data"
+ENABLE_WEB_UI: bool = True       # browser UI at /
+ADMIN_PASSWORD: Optional[str] = None  # None = set it from the UI on first visit
+TRAINING_DEVICE: str = "auto"    # "auto" | "cpu" | "cuda" (also in the UI's Settings)
 ```
 
 ### Notes
@@ -248,6 +296,130 @@ LOG_LEVEL: str = "INFO"
 - **Preload.** Defaults to lazy loading — each model is loaded the first
   time it's used and cached afterwards. Flip `PRELOAD_MODELS = True` to pay
   the load cost up front.
+- **Data root.** Everything the server creates lives under `DATA_DIR`
+  (default `<repo>/data`, ignored by git; the `CASESORTER_SERVER_DATA_DIR`
+  environment variable overrides both):
+
+  ```
+  data/
+  ├── config/server.db        registry: models, headstamps, jobs, clients, settings
+  ├── config/msal_cache.bin   community sign-in tokens (copy from a desktop install to reuse a login)
+  ├── models/<id>/images/     training images  {label}__{ticks}.jpg
+  ├── models/<id>/trainedmodel/<id>.pth
+  ├── models/<id>/reports/    evaluation reports (JSON)
+  ├── downloads/              community archives while they are being imported
+  └── logs/                   training-<stamp>.log
+  ```
+- **Admin password.** The web UI and its `/api/admin` endpoints are open
+  without a password only when `HOST` is `127.0.0.1`/`localhost`. On any
+  other bind address the first visit creates one (stored hashed in the
+  registry); `ADMIN_PASSWORD` in `config.py` overrides it. Sessions are a
+  cookie; the `API_KEY`, when set, also works as an admin bearer token.
+
+---
+
+## Web UI
+
+`http://<host>:<port>/` (disable with `ENABLE_WEB_UI = False`).
+
+| Page | What it does |
+|------|--------------|
+| **Dashboard** | Device (GPU/CPU), served models, running jobs, model list. |
+| **Models** | Create a model (name, cartridge, ConvNeXt size), import a ZIP, or open one. Per model: **Overview** (rename, headstamps, serving alias, export, checkpoint info, delete), **Images** (upload with a label, thumbnail grid, filter by headstamp, multi-select reclassify/delete, preview), **Training** (the desktop client's full training-settings dialog, start/cancel, live epoch + batch progress, log, history), **Evaluate** (score the training images or an uploaded held-out folder; accuracy, per-class table, confusion matrix, mismatches), **Share** (publish to the community). |
+| **Jobs** | Every training / evaluation / download / share job with progress and cancel. |
+| **Community** | Sign in (see below), browse the catalogue, download or update models. |
+| **Clients** | Generate one-time pairing codes, see bound clients, rename / revoke them. |
+| **Settings** | Allow remote clients, auto-serve downloads / freshly trained models, training device, admin password, and a read-only view of `config.py`. |
+
+### Community sign-in from a server
+
+The desktop client signs in with a browser and a loopback redirect on
+`http://localhost:44300/`. The server uses the same account, app
+registration and token cache, driving the same authorization-code flow
+itself:
+
+1. **Community → Sign in…** opens the reloadingrecipes.com sign-in page.
+2. After signing in, the page redirects to `http://localhost:44300/…`.
+   - If the browser runs **on the server machine**, the server's listener
+     on port 44300 catches it and you are signed in.
+   - If the browser runs **elsewhere**, that page fails to load. Copy its
+     full address from the address bar and paste it into the *Complete
+     sign-in* box on the Community page.
+3. The refresh token is kept in `data/config/msal_cache.bin` (mode 0600).
+   A `msal_cache.bin` copied from a desktop install works too.
+
+The developer overrides the client supports are honoured:
+`CASESORTER_API_BASE`, `CASESORTER_API_CA_BUNDLE`, `CASESORTER_API_INSECURE`.
+
+---
+
+## Remote-client API
+
+Base path `/api/v1`. Interactive docs (with schemas) at `/docs`.
+
+### Binding
+
+An admin creates a pairing code (**Clients** page, or
+`POST /api/admin/clients/pairing-code`). The client redeems it once:
+
+```
+POST /api/v1/bind
+{"pairing_code": "3F9A-C21B", "client_name": "Shop PC", "client_version": "1.4.0"}
+
+→ {"client_id": 1, "token": "csk_…", "server": {...}}
+```
+
+Every later request sends `Authorization: Bearer csk_…`. The same token is
+accepted by the OpenAI endpoints, so a bound client needs no separate API
+key. Admins can revoke tokens or disable remote clients altogether.
+`config.API_KEY` (when set) and an admin session cookie also authenticate,
+as admin.
+
+### Endpoints
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /server` | Version, device, served models, active jobs, capabilities. |
+| `GET /me` | Who the caller is (`admin` or a client). |
+| `GET /models` · `POST /models` · `GET/PATCH/DELETE /models/{id}` | Registry CRUD. `POST` body: `name`, `cartridge_name`, `model_mode` (`convnext_tiny/small/base/large`), optional `headstamps`, `training_config`. The response carries `image_count`, `class_counts`, `headstamps`, `has_checkpoint`, `is_serving`, `active_job`. |
+| `POST /models/{id}/serve` `{enabled, alias}` | Put a trained model on / take it off the OpenAI endpoints. |
+| `GET/PUT/POST /models/{id}/headstamps`, `POST …/headstamps/rename`, `DELETE …/headstamps/{name}` | Headstamp list; rename also renames the training images. |
+| `POST /models/{id}/images` (multipart `files[]`, optional `label`) | Add training images. Files named `{label}__{ticks}.jpg` keep their label and ticks; otherwise `label` is required. Images are re-encoded as JPEG. |
+| `GET /models/{id}/images?label=&page=&page_size=&search=` | Paged listing plus per-label counts. `label` may be `All`, a headstamp, or `UNKNOWN HEADSTAMP`. |
+| `GET /models/{id}/images/{file}[?thumb=true]` · `DELETE …` | Fetch (or thumbnail) / delete one image. |
+| `POST /models/{id}/images/bulk` `{action: reclassify|delete, filenames, label}` | Moderation in bulk. |
+| `POST /models/{id}/train` `{training_config: {...}}` | Queue a training run (one at a time). Returns the job. Overrides are saved on the model. |
+| `GET /jobs`, `GET /models/{id}/jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/log?after=`, `POST /jobs/{id}/cancel` | Job status, progress (`progress.epoch/total`, `progress.batch`, `progress.epochs[]`), log tail, cancel. |
+| `POST /models/{id}/evaluate` `{mapping}` · `POST /models/{id}/evaluate/upload` (multipart) | Evaluate against the training images or an uploaded labelled folder. Result: `summary` (accuracy, per-class), `confusion`, `report` name. |
+| `GET /models/{id}/evaluations`, `GET …/evaluations/{name}` | Stored reports. |
+| `POST /models/{id}/classify` (multipart `file` or JSON `{image: base64}`) | One-off classification with top-k, without serving the model. |
+| `GET /models/{id}/checkpoint` | Download the `.pth` (e.g. for a client that wants to run it locally). |
+| `GET /models/{id}/export?mode=ModelAndImages|ModelOnly|ImagesOnly` | ZIP in the desktop client's format (`manifest.json` + `model/` + `images/`). |
+| `POST /models/import` (multipart `file`, optional `name`, `cartridge`, `update_existing`) | Import such a ZIP (also legacy Windows-app archives). |
+| `GET /community/status`, `GET /community/models?search=&model_type=`, `GET /community/cartridges` | Catalogue, with `state` = `download` / `update` / `installed` per entry. |
+| `POST /community/models/{uid}/download` `{update_existing, serve}` | Download + import as a job. |
+| `POST /models/{id}/share` `{description, mode, feedback_enabled, feedback_floor}` | Publish to the community (needs the Contribute role). |
+
+Jobs: `status` is `queued → running → done | failed | cancelled`. Training
+`progress` mirrors the trainer's markers (`start`, `batch`, `epoch`,
+`done`); `result` of a finished training carries `best_val_acc`,
+`classes`, `duration_seconds`, `env`.
+
+### What training does
+
+The training worker (`aiserver/training/train_convnext.py`) is the desktop
+client's trainer: same flat-folder `{label}__{ticks}` dataset, augmentations,
+`Sequential(Dropout, Linear)` head, AdamW + cosine schedule, label
+smoothing 0.1, optional focal loss and SWA, and the same checkpoint payload
+(`model_state_dict`, `classes`, `base`, `image_size`, `*_version`). So a
+checkpoint trained here loads in the desktop client, and vice versa. Server
+additions: clean cancel via SIGTERM, `--device`, atomic checkpoint writes,
+batch-level progress, and a fallback to random init when the ImageNet
+weight download fails on an offline box.
+
+After a run: the checkpoint becomes the model's `model_path`, every class
+becomes a headstamp, `last_training_date` / duration / image count /
+`checkpoint_env` are recorded, and the served copy (if any) is reloaded.
 
 ---
 
@@ -257,7 +429,8 @@ LOG_LEVEL: str = "INFO"
 
 Standard OpenAI chat-completions request. The server only looks at three things:
 
-- `model` — must match a key in `config.MODELS`.
+- `model` — a key in `config.MODELS`, or the alias of a registry model with
+  serving enabled.
 - `messages[*].content[*]` — the **first** content part with
   `type: "image_url"` is used as the image. Everything else (system
   prompts, text parts, additional images) is ignored.
@@ -296,9 +469,13 @@ ignore it, and clients that do can read `response.confidence` directly.
 "AI response" the SDKs expose is unchanged. (The same value is also
 logged server-side at `INFO` level.)
 
+`topk` (also a CaseSorter extension) lists the top predictions with
+their probabilities.
+
 ### `GET /v1/models`
 
-Lists configured aliases in the standard OpenAI shape:
+Lists every served alias — `config.MODELS` entries plus registry models
+with serving enabled — in the standard OpenAI shape:
 
 ```json
 {
@@ -394,23 +571,59 @@ header. The server's behaviour:
 
 - `API_KEY = None` or empty → accept every request, header or no header.
 - `API_KEY = "abc123"` → require `Authorization: Bearer abc123` on
-  `/v1/chat/completions` and `/v1/models`. `/healthz` is always open.
+  `/v1/chat/completions`, `/v1/models` and `/getheadstamps`. `/healthz` is
+  always open.
+- A bound client's token (`csk_…`) is accepted everywhere the API key is,
+  so a light-weight client needs only the one credential.
 
 There is intentionally no per-model ACL — anyone with the key can hit
 every alias.
 
 ---
 
+## Development
+
+```
+python -m pytest tests        # registry, image store, ZIP import/export, evaluator, API
+```
+
+The tests use a temporary data root and a stub inference manager, so they
+run without a GPU and without any checkpoint files.
+
+---
+
 ## File map
 
 ```
-AIServer/
-├── README.md            ← this file
-├── Claude.md            ← short spec used during initial implementation
-├── config.py            ← user-editable settings
-├── server.py            ← FastAPI app + entry point
-├── model_manager.py     ← checkpoint loader + inference + cache
-└── setup.py             ← PyTorch / FastAPI installer (GPU/CPU autodetect)
+AI-Case-Sorter-Server/
+├── README.md                 ← this file
+├── config.py                 ← user-editable settings
+├── server.py                 ← FastAPI app: OpenAI endpoints, UI mount, entry point
+├── model_manager.py          ← checkpoint loader + inference cache (config + registry aliases)
+├── setup.py                  ← PyTorch / server-deps installer (GPU/CPU autodetect)
+├── startserver.bat / .sh     ← setup.py + server.py
+├── models/                   ← hand-copied checkpoints referenced by config.MODELS
+├── data/                     ← created at runtime: registry, images, checkpoints, logs
+├── aiserver/
+│   ├── paths.py              ← data-root layout
+│   ├── db.py, store.py       ← SQLite schema + repositories (models, headstamps, jobs, clients)
+│   ├── models.py             ← dataclasses shared with the desktop client's manifest format
+│   ├── image_store.py        ← {label}__{ticks}.jpg storage, thumbnails, reclassify/delete
+│   ├── model_io.py           ← ZIP export/import (desktop client + legacy Windows format)
+│   ├── evaluator.py          ← folder evaluation, confusion matrix, stored reports
+│   ├── service.py            ← everything the API and UI call
+│   ├── training/
+│   │   ├── train_convnext.py ← the trainer (port of the desktop client's)
+│   │   └── manager.py        ← job queue, subprocess runner, progress parsing
+│   ├── community/
+│   │   ├── auth.py           ← Azure AD B2C sign-in (MSAL auth-code flow)
+│   │   └── api.py            ← reloadingrecipes.com catalogue / download / share client
+│   ├── api/
+│   │   ├── deps.py           ← admin / client authentication
+│   │   ├── remote.py         ← /api/v1 (bound clients and the UI)
+│   │   └── admin.py          ← /api/admin (UI only)
+│   └── web/                  ← the browser UI (index.html, app.js, app.css; no build step)
+└── tests/                    ← pytest suite
 ```
 
 Marker files written by `setup.py` (`.torch_setup_complete`,
@@ -431,9 +644,26 @@ fail to connect.
 client isn't sending a matching Bearer token. Either clear `API_KEY` or
 update the client's stored key.
 
-**`404 Model 'foo' is not configured`** — the `model` field in the
-request doesn't match any key in `config.MODELS`. The error body lists
-the known aliases.
+**`404 Model 'foo' is not being served`** — the `model` field in the
+request doesn't match a key in `config.MODELS` or a served registry
+model's alias. The error body lists the served aliases; check *Serve this
+model* on the model's Overview page.
+
+**Web UI asks for a password I never set** — the server is bound to a
+non-loopback address and no admin password exists yet: the first visit
+creates one. To reset a forgotten password, stop the server and delete the
+`admin_password_hash` row from `data/config/server.db` (or set
+`ADMIN_PASSWORD` in `config.py`).
+
+**Community sign-in redirects to a page that won't load** — expected when
+the browser isn't on the server machine. Copy that page's full address
+(`http://localhost:44300/?code=…`) into the *Complete sign-in* box.
+
+**Training fails immediately with a weight-download error** — the box is
+offline and torchvision can't fetch ImageNet weights. The trainer logs a
+warning and continues from random init; accuracy will be lower. Run one
+training on a connected machine once (the weights are cached in
+`~/.cache/torch`).
 
 **`400 No image_url content found in messages`** — the request body has
 no content part with `type: "image_url"`. The official OpenAI vision
@@ -456,17 +686,8 @@ reinstall the right wheel.
 ## Adapting this to a new project
 
 The folder is intentionally self-contained — there are no imports from
-the parent CaseSorter codebase. To lift it into its own repo:
-
-1. Copy the folder verbatim.
-2. Drop `Claude.md` if you don't want the original brief in the history.
-3. Decide whether to keep the GPU/CPU autodetect or simplify to a plain
-   `requirements.txt`. The current `setup.py` pins
-   `torch==2.9.1` / `torchvision==0.24.1` and uses the cu128 wheel index
-   for GPU.
-4. If you want a `/v1/embeddings` or `/v1/chat/completions` streaming
-   surface later, it slots into `server.py` next to the existing
-   endpoints. The manager already returns full softmax probabilities;
-   the top-1 score is exposed today as the response's `confidence`
-   field, and top-K or per-class scores could be plumbed through the
-   same way.
+the parent CaseSorter codebase. The community integration is the only
+CaseSorter-specific piece (`aiserver/community/`): drop it, or point it at
+your own backend via `CASESORTER_API_BASE`, and the rest (registry, image
+store, trainer, evaluator, serving, remote-client API, UI) is generic
+image-classification infrastructure.

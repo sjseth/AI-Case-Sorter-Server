@@ -1,14 +1,20 @@
-"""OpenAI-compatible HTTP server for trained ConvNeXt checkpoints.
+"""CaseSorter AI Server.
 
-The CaseSorter desktop client treats this process like an OpenAI endpoint:
-it POSTs to /v1/chat/completions with the image embedded as a data: URL and
-reads the predicted label out of choices[0].message.content. Configuration
-(bind host, API key, model aliases) lives in config.py.
+Two jobs in one process:
+
+1. **Serve models** over an OpenAI-compatible API (``POST /v1/chat/completions``,
+   ``GET /v1/models``, ``GET /getheadstamps``) -- what the CaseSorter desktop
+   client's *AI Config* / OpenAI mode points at. Models come from
+   ``config.MODELS`` and from the registry (anything trained, imported or
+   downloaded here with serving switched on).
+
+2. **Do the heavy lifting for light-weight clients** bound in *remote* mode:
+   create models, receive training images, train, evaluate, moderate images,
+   export/import and share, all through ``/api/v1`` (see ``aiserver/api``).
+   A browser UI at ``/`` drives the same features for hands-on use.
 
 Run it with:
     python server.py
-or:
-    uvicorn server:app --host 127.0.0.1 --port 8000
 """
 
 from __future__ import annotations
@@ -20,11 +26,14 @@ import re
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,6 +45,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 from model_manager import ModelManager
 
+from aiserver import __version__, paths
+from aiserver.api import admin as admin_api
+from aiserver.api import remote as remote_api
+from aiserver.api.deps import SESSION_COOKIE
+from aiserver.service import AppService
+
 
 logging.basicConfig(
     level=getattr(logging, (config.LOG_LEVEL or "INFO").upper(), logging.INFO),
@@ -43,28 +58,50 @@ logging.basicConfig(
 )
 log = logging.getLogger("aiserver")
 
+if getattr(config, "DATA_DIR", None):
+    paths.set_data_root(config.DATA_DIR)
+
 
 # ---------------------------------------------------------------------------
 # App + shared state
 # ---------------------------------------------------------------------------
 
-app = FastAPI(
-    title="CaseSorter AI Server",
-    description=(
-        "OpenAI-compatible inference server for trained ConvNeXt models. "
-        "Implements POST /v1/chat/completions and GET /v1/models."
-    ),
-    version="0.1.0",
-)
-
 manager = ModelManager(
     aliases=config.MODELS,
     options=getattr(config, "MODEL_OPTIONS", {}),
 )
+service = AppService(config, manager)
 
-if getattr(config, "PRELOAD_MODELS", False):
-    log.info("Preloading %d model(s)...", len(config.MODELS))
-    manager.preload()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    stored_device = service.settings.get("training_device")
+    if stored_device:
+        config.TRAINING_DEVICE = stored_device
+    service.start()
+    if getattr(config, "PRELOAD_MODELS", False):
+        log.info("Preloading %d model(s)...", len(manager.aliases()))
+        manager.preload()
+    log.info("Data root: %s", paths.data_root())
+    try:
+        yield
+    finally:
+        service.stop()
+
+
+app = FastAPI(
+    title="CaseSorter AI Server",
+    description=(
+        "OpenAI-compatible inference server for trained ConvNeXt models, plus the "
+        "remote-client API (/api/v1) that lets light-weight CaseSorter clients create, "
+        "train, evaluate and manage models on this machine."
+    ),
+    version=__version__,
+    lifespan=lifespan,
+)
+app.state.service = service
+app.include_router(remote_api.router)
+app.include_router(admin_api.router)
 
 
 # ---------------------------------------------------------------------------
@@ -75,27 +112,41 @@ if getattr(config, "PRELOAD_MODELS", False):
 async def log_requests(request: Request, call_next):
     client = request.client.host if request.client else "?"
     response = await call_next(request)
-    log.info("%s %s %s -> %d", client, request.method, request.url.path, response.status_code)
+    path = request.url.path
+    if not path.startswith("/ui/") and not (path.startswith("/api/v1/jobs/") and response.status_code == 200):
+        log.info("%s %s %s -> %d", client, request.method, path, response.status_code)
     return response
 
 
 # ---------------------------------------------------------------------------
-# Authentication
+# Authentication for the OpenAI endpoints
 # ---------------------------------------------------------------------------
 
 _bearer = HTTPBearer(auto_error=False)
 
 
-def require_api_key(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)) -> None:
-    expected = (config.API_KEY or "").strip()
+def require_api_key(
+    request: Request,
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> None:
+    """``API_KEY`` from config.py, a bound client's token, or an admin session all pass."""
+    svc = request.app.state.service
+    expected = (getattr(svc.config, "API_KEY", None) or "").strip()
+    token = creds.credentials if creds and creds.scheme.lower() == "bearer" else None
+    if token:
+        if expected and svc.api_key_valid(token):
+            return
+        if svc.settings.get("allow_remote_clients", True) and svc.clients.authenticate(token):
+            return
     if not expected:
         return
-    if creds is None or creds.scheme.lower() != "bearer" or creds.credentials != expected:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if svc.session_valid(request.cookies.get(SESSION_COOKIE)):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing API key",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -118,8 +169,6 @@ class ChatMessage(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    # Accept (and ignore) any extra OpenAI fields the client sends so we stay
-    # compatible with future client tweaks.
     model_config = ConfigDict(extra="allow", protected_namespaces=())
 
     model: str
@@ -156,6 +205,7 @@ class ChatCompletionResponse(BaseModel):
     # CaseSorter extension: top-1 softmax probability. Lives at the top level
     # so OpenAI-vision clients that don't know about it just ignore it.
     confidence: Optional[float] = None
+    topk: Optional[List[dict[str, Any]]] = None
 
 
 class ModelInfo(BaseModel):
@@ -174,7 +224,6 @@ class ModelList(BaseModel):
 # Image extraction
 # ---------------------------------------------------------------------------
 
-# data:image/png;base64,...   (mime type may include "+", "-", ".", "/")
 _DATA_URL_RE = re.compile(
     r"^data:(?P<mime>[\w./+\-]+);base64,(?P<body>.+)$",
     re.DOTALL,
@@ -204,37 +253,38 @@ def _extract_image(messages: List[ChatMessage]) -> Image.Image:
     raise HTTPException(status_code=400, detail="No image_url content found in messages")
 
 
+def _manager():
+    return app.state.service.manager
+
+
+def _unknown_model(alias: str) -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail=(f"Model {alias!r} is not being served. Served models: {sorted(_manager().aliases())}"),
+    )
+
+
 # ---------------------------------------------------------------------------
-# Endpoints
+# OpenAI-compatible endpoints
 # ---------------------------------------------------------------------------
 
-@app.get(
-    "/v1/models",
-    response_model=ModelList,
-    dependencies=[Depends(require_api_key)],
-)
+@app.get("/v1/models", response_model=ModelList, dependencies=[Depends(require_api_key)])
 def list_models() -> ModelList:
     now = int(time.time())
-    return ModelList(data=[ModelInfo(id=name, created=now) for name in manager.aliases()])
+    return ModelList(data=[ModelInfo(id=name, created=now) for name in _manager().aliases()])
 
 
-@app.post(
-    "/v1/chat/completions",
-    response_model=ChatCompletionResponse,
-    dependencies=[Depends(require_api_key)],
-)
+@app.post("/v1/chat/completions", response_model=ChatCompletionResponse, dependencies=[Depends(require_api_key)])
 def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
-    if not manager.has(req.model):
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Model {req.model!r} is not configured. "
-                f"Known models: {sorted(manager.aliases())}"
-            ),
-        )
+    mgr = _manager()
+    if not mgr.has(req.model):
+        raise _unknown_model(req.model)
 
     image = _extract_image(req.messages)
-    pred = manager.predict(req.model, image)
+    try:
+        pred = mgr.predict(req.model, image)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     log.info("%s -> %s (score=%.3f)", req.model, pred["label"], pred["score"])
 
     return ChatCompletionResponse(
@@ -243,41 +293,58 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
         model=req.model,
         choices=[Choice(message=ResponseMessage(content=pred["label"]))],
         confidence=pred["score"],
+        topk=pred.get("topk"),
     )
 
 
-@app.get(
-    "/getheadstamps",
-    response_model=List[str],
-    dependencies=[Depends(require_api_key)],
-)
+@app.get("/getheadstamps", response_model=List[str], dependencies=[Depends(require_api_key)])
 def get_headstamps(model: Optional[str] = None) -> List[str]:
+    mgr = _manager()
     alias = model
     if alias is None:
-        configured = manager.aliases()
+        configured = mgr.aliases()
         if len(configured) != 1:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Multiple models configured; specify ?model=<alias>. "
-                    f"Known models: {sorted(configured)}"
-                ),
+                detail=(f"Multiple models served; specify ?model=<alias>. Known models: {sorted(configured)}"),
             )
         alias = configured[0]
-    if not manager.has(alias):
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Model {alias!r} is not configured. "
-                f"Known models: {sorted(manager.aliases())}"
-            ),
-        )
-    return manager.classes(alias)
+    if not mgr.has(alias):
+        raise _unknown_model(alias)
+    try:
+        return mgr.classes(alias)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
-    return {"status": "ok", "models": manager.aliases()}
+    return {
+        "status": "ok",
+        "version": __version__,
+        "models": _manager().aliases(),
+        "active_jobs": len(app.state.service.jobs.active()),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Web UI
+# ---------------------------------------------------------------------------
+
+_WEB_DIR = Path(__file__).resolve().parent / "aiserver" / "web"
+
+if getattr(config, "ENABLE_WEB_UI", True) and _WEB_DIR.is_dir():
+    app.mount("/ui", StaticFiles(directory=str(_WEB_DIR)), name="ui")
+
+    @app.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        return FileResponse(str(_WEB_DIR / "index.html"), headers={"Cache-Control": "no-cache"})
+
+else:
+
+    @app.get("/", include_in_schema=False)
+    def index_redirect() -> RedirectResponse:
+        return RedirectResponse("/docs")
 
 
 # ---------------------------------------------------------------------------
@@ -285,14 +352,7 @@ def healthz() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _logging_http_protocol() -> type:
-    """Wrap uvicorn's HTTP protocol to dump raw bytes at DEBUG level.
-
-    uvicorn's "Invalid HTTP request received." warning doesn't include what
-    was actually sent. Set LOG_LEVEL = "DEBUG" in config.py to see the raw
-    bytes of each chunk as it arrives, which usually makes the cause obvious
-    (e.g. a TLS handshake hitting a plain-HTTP port, or a malformed request
-    line).
-    """
+    """Wrap uvicorn's HTTP protocol to dump raw bytes at DEBUG level."""
     try:
         from uvicorn.protocols.http.httptools_impl import HttpToolsProtocol as _Base
     except ImportError:
@@ -315,7 +375,7 @@ def _logging_http_protocol() -> type:
 def main() -> None:
     import uvicorn
 
-    log.info("Listening on http://%s:%d", config.HOST, config.PORT)
+    log.info("Listening on http://%s:%d  (web UI at /, API docs at /docs)", config.HOST, config.PORT)
     uvicorn.run(
         "server:app",
         host=config.HOST,

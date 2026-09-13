@@ -11,3 +11,9 @@ __pycache__/
 
 # Local virtual environment created by startserver.sh
 .venv/
+
+# Server data root (registry DB, training images, checkpoints, logs, token cache)
+data/
+
+# pytest / tooling caches
+.pytest_cache/

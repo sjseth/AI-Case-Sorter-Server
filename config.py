@@ -79,3 +79,28 @@ PRELOAD_MODELS: bool = True
 # DEBUG also dumps the raw bytes of each incoming HTTP chunk -- useful for
 # diagnosing uvicorn's "Invalid HTTP request received." warning.
 LOG_LEVEL: str = "INFO"
+
+
+# ---------------------------------------------------------------------------
+# Web UI, registry and remote clients
+# ---------------------------------------------------------------------------
+
+# Where the server keeps everything it creates itself: the model registry
+# database, training images, trained checkpoints, evaluation reports, logs
+# and the community sign-in cache. None -> "<this folder>/data". The
+# CASESORTER_SERVER_DATA_DIR environment variable overrides both.
+DATA_DIR: Optional[str] = None
+
+# Serve the browser UI at http://<host>:<port>/ . The UI is where you set the
+# admin password, pair light-weight clients, download community models, and
+# create / train / evaluate / serve models.
+ENABLE_WEB_UI: bool = True
+
+# Optional fixed admin password for the web UI. Leave as None to set one from
+# the UI on first visit (it is then stored, hashed, in the registry database).
+# A password is only required when HOST is not 127.0.0.1 / localhost.
+ADMIN_PASSWORD: Optional[str] = None
+
+# Device the trainer uses: "auto" (CUDA when available), "cpu" or "cuda".
+# Can also be changed from the UI's Settings page.
+TRAINING_DEVICE: str = "auto"

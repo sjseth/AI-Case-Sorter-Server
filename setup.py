@@ -33,12 +33,18 @@ CPU_INDEX_URL = "https://download.pytorch.org/whl/cpu"
 # PyTorch >= 2.2 supports NumPy 2.x. We pin to the modern major.
 NUMPY_SPEC = "numpy>=2.0"
 
-# Server-side HTTP stack.
+# Server-side HTTP stack, plus what the registry / remote-client API and the
+# community integration need. Bump SERVER_DEPS_VERSION whenever this list
+# changes so existing installs pick up the new packages on the next start.
 SERVER_DEPS = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "Pillow>=10.0",
+    "python-multipart>=0.0.9",   # multipart uploads (training images, ZIP import)
+    "requests>=2.31",            # community backend client
+    "msal>=1.28",                # community sign-in (Azure AD B2C)
 ]
+SERVER_DEPS_VERSION = "2"
 
 # Skip the install path entirely when this marker matches the current mode.
 TORCH_MARKER_FILE = ".torch_setup_complete"
@@ -140,11 +146,11 @@ def install_numpy() -> bool:
 
 def install_server_deps(base_dir: Path) -> bool:
     marker = base_dir / SERVER_DEPS_MARKER_FILE
-    if marker.exists():
+    if marker.exists() and marker.read_text().strip() == SERVER_DEPS_VERSION:
         print("[SETUP] Server deps already installed. Skipping.", flush=True)
         return True
 
-    print("[SETUP] Installing FastAPI / uvicorn / Pillow...", flush=True)
+    print("[SETUP] Installing server dependencies (FastAPI, uvicorn, Pillow, msal, ...)...", flush=True)
     if not pip_install(" ".join(f'"{spec}"' for spec in SERVER_DEPS)):
         print(
             "[SETUP] ERROR: Server dep install failed. The server will not start.",
@@ -152,7 +158,7 @@ def install_server_deps(base_dir: Path) -> bool:
         )
         return False
 
-    marker.write_text("ok")
+    marker.write_text(SERVER_DEPS_VERSION)
     print("[SETUP] Server deps installed successfully.", flush=True)
     return True
 
