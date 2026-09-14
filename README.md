@@ -355,7 +355,10 @@ The developer overrides the client supports are honoured:
 
 ## Remote-client API
 
-Base path `/api/v1`. Interactive docs (with schemas) at `/docs`.
+Base path `/api/v1`. Interactive docs (with schemas) at `/docs`. The full
+contract for implementing remote mode in the desktop client, with sample
+payloads and a reference Python client, is in
+[docs/REMOTE_CLIENT_SPEC.md](docs/REMOTE_CLIENT_SPEC.md).
 
 ### Binding
 
